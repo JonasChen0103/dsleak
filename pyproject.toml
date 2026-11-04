@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dsleak"
+dynamic = ["version"]
+description = "A .DS_Store file disclosure exploit: parses leaked .DS_Store files and downloads the listed files recursively."
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+dependencies = ["ds-store>=1.3"]
+keywords = ["security", "pentest", "ds_store", "information-disclosure", "recon"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+]
+
+[project.urls]
+Homepage = "https://github.com/JonasChen0103/dsleak"
+
+[project.scripts]
+dsleak = "dsleak:main"
+
+[tool.setuptools]
+py-modules = ["dsleak"]
+
+[tool.setuptools.dynamic]
+version = { attr = "dsleak.__version__" }
