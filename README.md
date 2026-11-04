@@ -156,29 +156,153 @@ The end-to-end test serves a fake leaky site from a temporary directory and chec
 
 ## 繁體中文說明
 
-這是一個 **`.DS_Store` 檔案洩漏利用工具**。它會下載網站上外洩的 `.DS_Store`，解析其中記錄的檔名，再遞迴下載所有列出的檔案與子目錄中的 `.DS_Store`。
+這是一個 **`.DS_Store` 檔案洩漏利用工具**。它會下載網站上外洩的 `.DS_Store`，解析其中記錄的檔名，再遞迴下載所有列出的檔案，以及各子目錄中的 `.DS_Store`。
 
-主要特色：
+> **法律聲明：** 本工具僅限用於您擁有或已取得明確授權測試的系統，未經授權存取他人電腦系統屬違法行為。
 
-- 精確移除 `.DS_Store` 後綴，避免 `rstrip('.DS_Store')` 誤刪字元導致 `/store/.DS_Store` 這類路徑爬錯位置的問題
-- 加入請求逾時，避免單一慢速伺服器讓掃描永遠卡住
-- 以 `ThreadPoolExecutor` 逐層爬取，不使用共享計數器
-- 解析前檢查 magic bytes，可辨識回傳 200 的假 404 頁面
-- 更嚴格的路徑穿越防護，確保檔案只會寫入輸出目錄
-- 自動替換 Windows 不允許的檔名字元，並對檔名做 URL 編碼
-- 支援輸出目錄、執行緒數、逾時、TLS 略過驗證、User-Agent 等選項
-- 只需 Python 3.9+ 與 `ds_store` 套件，附自動化測試與 MIT 授權
+### 背景
 
-**安裝與使用**
+macOS 的 Finder 會在每個開啟過的資料夾裡寫入隱藏的 `.DS_Store` 檔案，用來記錄檢視設定**以及該資料夾內的檔名**。開發者若把整個專案目錄上傳到網頁伺服器，`.DS_Store` 也會跟著上去，任何人都能下載它來列出目錄內容，包括沒有任何連結指向的備份檔、設定檔與管理頁面。
+
+### 功能
+
+- 遞迴爬取：下載所有列出的檔名，並對看起來像目錄的名稱繼續探測其 `.DS_Store`。
+- 可設定執行緒數量的並行請求。
+- 依照遠端結構存放於 `<output>/<host>/...`。
+- 預設安全：拒絕 `../../etc/passwd` 這類路徑穿越項目、替換 Windows 不允許的檔名字元，且絕不寫入輸出目錄以外的位置。
+- 檢查 `.DS_Store` 的 magic bytes，可辨識軟 404 頁面（回傳 `200` 但內容是 HTML 錯誤頁的伺服器）。
+- 支援請求逾時、自訂 User-Agent、略過 TLS 憑證驗證，以及透過 `HTTP_PROXY` / `HTTPS_PROXY` 使用代理伺服器。
+- 只有一個小型相依套件（[`ds_store`](https://pypi.org/project/ds-store/)），HTTP 使用標準函式庫處理。
+
+### 已處理的常見問題
+
+| 天真的做法 | dsleak |
+| --- | --- |
+| `url.rstrip('.DS_Store')` 移除的是*字元*而非後綴，`/store/.DS_Store` 會變成 `/`，導致爬錯位置 | 精確移除後綴 |
+| 沒有請求逾時，一台慢速伺服器就能讓掃描永遠卡住 | `--timeout`（預設 10 秒） |
+| 執行緒計數器未加鎖就遞減，結束條件依賴 2 秒的佇列逾時 | 以 `ThreadPoolExecutor` 逐層（廣度優先）爬取，沒有共享計數器，工作完成立即結束 |
+| 任何 `200` 回應都當成 `.DS_Store` 儲存並交給解析器 | 解析前先檢查 magic bytes，回報並略過軟 404 頁面 |
+| 路徑穿越檢查比對的是目前目錄，而非實際寫入位置 | 每個項目都必須是單一路徑元件，並驗證最終路徑位於輸出目錄內 |
+| 檔名含 `:` `?` `*` 等字元時，在 Windows 上下載會失敗 | 將不合法字元替換為 `_` |
+| 含空白或非 ASCII 字元的檔名沒有做 URL 編碼 | 檔名一律做百分比編碼 |
+| 寫死 10 個執行緒、只能存到目前目錄、沒有 TLS 或 User-Agent 選項 | 提供 `-t`、`-o`、`-k`、`-A`、`-v` 選項 |
+
+### 安裝
 
 ```bash
 pip install git+https://github.com/JonasChen0103/dsleak.git
-dsleak -o loot https://www.example.com/.DS_Store
 ```
 
-**防護建議：** 在 nginx 或 Apache 設定中拒絕存取 `.DS_Store`，部署前用 `find . -name .DS_Store -delete` 清除，並將 `.DS_Store` 加入全域 `.gitignore`。
+或直接執行腳本：
 
-> **法律聲明：** 本工具僅限用於您擁有或已取得明確授權測試的系統，未經授權存取他人系統屬違法行為。
+```bash
+git clone https://github.com/JonasChen0103/dsleak.git
+cd dsleak
+pip install ds-store
+python dsleak.py https://www.example.com/.DS_Store
+```
+
+### 使用方式
+
+```
+dsleak [-h] [-o OUTPUT] [-t THREADS] [--timeout TIMEOUT] [-k]
+       [-A USER_AGENT] [-v] [-V]
+       url
+```
+
+| 選項 | 說明 | 預設值 |
+| --- | --- | --- |
+| `url` | 目標 `.DS_Store` 的 URL，或包含它的目錄。缺少的通訊協定與 `/.DS_Store` 後綴會自動補上。 | 必填 |
+| `-o, --output` | 輸出目錄 | `.` |
+| `-t, --threads` | 並行請求數 | `10` |
+| `--timeout` | 請求逾時（秒） | `10` |
+| `-k, --insecure` | 略過 TLS 憑證驗證 | 關閉 |
+| `-A, --user-agent` | User-Agent 標頭 | 桌面版 Chrome 的 UA |
+| `-v, --verbose` | 一併顯示非 200 的回應 | 關閉 |
+| `-V, --version` | 顯示版本 | |
+
+結束代碼：至少儲存一個檔案時為 `0`，什麼都沒找到時為 `1`，被中斷時為 `130`。
+
+#### 範例
+
+```bash
+# 以下三種寫法效果相同
+dsleak https://www.example.com/.DS_Store
+dsleak https://www.example.com/
+dsleak www.example.com
+
+# 透過 Burp、使用 20 個執行緒，存到 ./loot
+HTTPS_PROXY=http://127.0.0.1:8080 dsleak -k -t 20 -o loot https://www.example.com/static/
+```
+
+#### 輸出範例
+
+```
+$ dsleak -o loot https://www.example.com/
+[200] https://www.example.com/.DS_Store
+[200] https://www.example.com/admin/.DS_Store
+[200] https://www.example.com/backup.zip
+[200] https://www.example.com/index.php
+[200] https://www.example.com/admin/config.php
+[*] Done. 5 file(s) saved under /home/user/loot
+
+$ tree loot
+loot
+└── www.example.com
+    ├── admin
+    │   └── config.php
+    ├── backup.zip
+    └── index.php
+```
+
+（`.DS_Store` 也會一併儲存，只是 `tree` 預設不顯示隱藏檔。）
+
+### 運作原理
+
+1. 下載 `<dir>/.DS_Store`（不跟隨重新導向），並確認開頭是 `\x00\x00\x00\x01Bud1` magic bytes。
+2. 用 `ds_store` 函式庫解析 B-tree，收集所有記錄的檔名。
+3. 捨棄不安全的名稱（`.`、`..`，以及含有 `/`、`\` 或 NUL 的名稱）。
+4. 將 `<dir>/<name>` 加入下載佇列；若名稱沒有副檔名，也將 `<dir>/<name>/.DS_Store` 加入佇列。
+5. 逐層重複，直到沒有新的 URL 為止。
+
+名稱帶有短副檔名的目錄（例如 `v1.2`）會被視為檔案而不探測。如需掃描，請直接指定該目錄的 URL。
+
+### 防護建議
+
+如果您管理網頁伺服器，請封鎖對 `.DS_Store` 的存取，並在部署時移除這些檔案。
+
+**nginx**
+
+```nginx
+location ~ /\.DS_Store$ {
+    deny all;
+}
+```
+
+**Apache**
+
+```apache
+<Files ".DS_Store">
+    Require all denied
+</Files>
+```
+
+**清除與預防**
+
+```bash
+find . -name .DS_Store -delete
+echo .DS_Store >> ~/.gitignore_global && git config --global core.excludesfile ~/.gitignore_global
+defaults write com.apple.desktopservices DSDontWriteNetworkStores -bool true  # 不在網路磁碟上產生 .DS_Store
+```
+
+### 開發
+
+```bash
+pip install ds-store
+python -m unittest -v
+```
+
+端對端測試會從暫存目錄架設一個模擬外洩的網站，驗證遞迴下載、路徑穿越防護與軟 404 檢查。
 
 ## Credits
 
