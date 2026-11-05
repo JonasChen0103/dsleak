@@ -19,7 +19,9 @@ macOS Finder writes a hidden `.DS_Store` file into every folder it opens. The fi
 - Recursive crawl: every listed name is downloaded, and every name that looks like a directory is probed for its own `.DS_Store`.
 - Concurrent requests with a configurable thread pool.
 - Mirrors the remote layout under `<output>/<host>/...`.
-- Safe by default: rejects path traversal entries such as `../../etc/passwd`, sanitizes file names that are illegal on Windows, and never writes outside the output directory.
+- Safe by default: skips path traversal entries such as `../../etc/passwd`, sanitizes file names that are illegal on Windows, and never writes outside the output directory.
+- `--allow-traversal` requests those entries anyway, for pentests and CTFs where they are the point; the responses are still saved inside the output directory (`..` becomes `__`).
+- Pass a local `.DS_Store` file instead of a URL to just list the names it records.
 - Detects soft-404 pages (servers that answer `200` with an HTML error page) by checking the `.DS_Store` magic bytes.
 - Request timeout, custom User-Agent, optional TLS verification bypass, proxy support through `HTTP_PROXY` / `HTTPS_PROXY`.
 - One small dependency ([`ds_store`](https://pypi.org/project/ds-store/)); HTTP is done with the standard library.
@@ -64,18 +66,19 @@ python dsleak.py https://www.example.com/.DS_Store
 
 ```
 dsleak [-h] [-o OUTPUT] [-t THREADS] [--timeout TIMEOUT] [-k]
-       [-A USER_AGENT] [-v] [-V]
+       [-A USER_AGENT] [--allow-traversal] [-v] [-V]
        url
 ```
 
 | Option | Description | Default |
 | --- | --- | --- |
-| `url` | Target `.DS_Store` URL, or the directory that contains it. The scheme and the `/.DS_Store` suffix are added when missing. | required |
+| `url` | Target `.DS_Store` URL, or the directory that contains it. The scheme and the `/.DS_Store` suffix are added when missing. A local `.DS_Store` file path lists its names without sending any request. | required |
 | `-o, --output` | Output directory | `.` |
 | `-t, --threads` | Concurrent requests | `10` |
 | `--timeout` | Request timeout in seconds | `10` |
 | `-k, --insecure` | Skip TLS certificate verification | off |
 | `-A, --user-agent` | User-Agent header | a desktop Chrome UA |
+| `--allow-traversal` | Also request entries such as `../x` or `a/b`; files are still saved inside the output directory | off |
 | `-v, --verbose` | Also report non-200 responses | off |
 | `-V, --version` | Print the version | |
 
@@ -91,6 +94,12 @@ dsleak www.example.com
 
 # Save into ./loot with 20 threads through Burp
 HTTPS_PROXY=http://127.0.0.1:8080 dsleak -k -t 20 -o loot https://www.example.com/static/
+
+# Also request traversal entries such as ../../etc/passwd
+dsleak --allow-traversal -o loot http://ctf.example.com/
+
+# List the names in a .DS_Store you already downloaded (no requests)
+dsleak ~/Downloads/.DS_Store
 ```
 
 ### Sample output
@@ -119,7 +128,7 @@ loot
 
 1. Fetch `<dir>/.DS_Store` without following redirects. Check that it starts with the `\x00\x00\x00\x01Bud1` magic.
 2. Parse the B-tree with the `ds_store` library and collect every recorded file name.
-3. Drop unsafe names (`.`, `..`, anything containing `/`, `\` or NUL).
+3. Drop unsafe names (`.`, `..`, anything containing `/`, `\` or NUL) unless `--allow-traversal` is set.
 4. Queue `<dir>/<name>` for download. If the name has no file extension, also queue `<dir>/<name>/.DS_Store`.
 5. Repeat level by level until no new URLs are found.
 
@@ -185,7 +194,9 @@ macOS 的 Finder 會在每個開啟過的資料夾裡寫入隱藏的 `.DS_Store`
 - 遞迴爬取：下載所有列出的檔名，並對看起來像目錄的名稱繼續探測其 `.DS_Store`。
 - 可設定執行緒數量的並行請求。
 - 依照遠端結構存放於 `<output>/<host>/...`。
-- 預設安全：拒絕 `../../etc/passwd` 這類路徑穿越項目、替換 Windows 不允許的檔名字元，且絕不寫入輸出目錄以外的位置。
+- 預設安全：略過 `../../etc/passwd` 這類路徑穿越項目、替換 Windows 不允許的檔名字元，且絕不寫入輸出目錄以外的位置。
+- 滲透測試或 CTF 需要時，可用 `--allow-traversal` 照樣請求這些項目；回應仍只會存進輸出目錄內（`..` 會改成 `__`）。
+- 參數改給本機的 `.DS_Store` 檔案而非 URL，即可直接列出其中記錄的檔名。
 - 檢查 `.DS_Store` 的 magic bytes，可辨識軟 404 頁面（回傳 `200` 但內容是 HTML 錯誤頁的伺服器）。
 - 支援請求逾時、自訂 User-Agent、略過 TLS 憑證驗證，以及透過 `HTTP_PROXY` / `HTTPS_PROXY` 使用代理伺服器。
 - 只有一個小型相依套件（[`ds_store`](https://pypi.org/project/ds-store/)），HTTP 使用標準函式庫處理。
@@ -230,18 +241,19 @@ python dsleak.py https://www.example.com/.DS_Store
 
 ```
 dsleak [-h] [-o OUTPUT] [-t THREADS] [--timeout TIMEOUT] [-k]
-       [-A USER_AGENT] [-v] [-V]
+       [-A USER_AGENT] [--allow-traversal] [-v] [-V]
        url
 ```
 
 | 選項 | 說明 | 預設值 |
 | --- | --- | --- |
-| `url` | 目標 `.DS_Store` 的 URL，或包含它的目錄。缺少的通訊協定與 `/.DS_Store` 後綴會自動補上。 | 必填 |
+| `url` | 目標 `.DS_Store` 的 URL，或包含它的目錄。缺少的通訊協定與 `/.DS_Store` 後綴會自動補上。若給的是本機 `.DS_Store` 檔案路徑，則只列出檔名，不發出任何請求。 | 必填 |
 | `-o, --output` | 輸出目錄 | `.` |
 | `-t, --threads` | 並行請求數 | `10` |
 | `--timeout` | 請求逾時（秒） | `10` |
 | `-k, --insecure` | 略過 TLS 憑證驗證 | 關閉 |
 | `-A, --user-agent` | User-Agent 標頭 | 桌面版 Chrome 的 UA |
+| `--allow-traversal` | 一併請求 `../x`、`a/b` 這類項目；檔案仍只會存進輸出目錄內 | 關閉 |
 | `-v, --verbose` | 一併顯示非 200 的回應 | 關閉 |
 | `-V, --version` | 顯示版本 | |
 
@@ -257,6 +269,12 @@ dsleak www.example.com
 
 # 透過 Burp、使用 20 個執行緒，存到 ./loot
 HTTPS_PROXY=http://127.0.0.1:8080 dsleak -k -t 20 -o loot https://www.example.com/static/
+
+# 一併請求 ../../etc/passwd 這類路徑穿越項目
+dsleak --allow-traversal -o loot http://ctf.example.com/
+
+# 列出已下載的 .DS_Store 中記錄的檔名（不發出請求）
+dsleak ~/Downloads/.DS_Store
 ```
 
 #### 輸出範例
@@ -285,7 +303,7 @@ loot
 
 1. 下載 `<dir>/.DS_Store`（不跟隨重新導向），並確認開頭是 `\x00\x00\x00\x01Bud1` magic bytes。
 2. 用 `ds_store` 函式庫解析 B-tree，收集所有記錄的檔名。
-3. 捨棄不安全的名稱（`.`、`..`，以及含有 `/`、`\` 或 NUL 的名稱）。
+3. 捨棄不安全的名稱（`.`、`..`，以及含有 `/`、`\` 或 NUL 的名稱），除非指定了 `--allow-traversal`。
 4. 將 `<dir>/<name>` 加入下載佇列；若名稱沒有副檔名，也將 `<dir>/<name>/.DS_Store` 加入佇列。
 5. 逐層重複，直到沒有新的 URL 為止。
 

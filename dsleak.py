@@ -17,7 +17,7 @@ from io import BytesIO
 
 from ds_store import DSStore
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 DS_STORE = ".DS_Store"
 MAGIC = b"\x00\x00\x00\x01Bud1"
@@ -53,13 +53,18 @@ def is_safe_name(name):
 
 
 def local_path(root, url):
-    """Map a URL to root/<host>/<path>, refusing anything outside root."""
+    """Map a URL to root/<host>/<path>, refusing anything outside root.
+
+    "." and ".." segments become "_" and "__", so traversal URLs are still
+    saved inside root.
+    """
     parts = urllib.parse.urlsplit(url)
     segments = [parts.netloc] + [urllib.parse.unquote(s) for s in parts.path.split("/") if s]
     segments = [UNSAFE_CHARS.sub("_", s) for s in segments]
+    segments = ["_" * len(s) if s in (".", "..") else s for s in segments]
     root = os.path.abspath(root)
     path = os.path.abspath(os.path.join(root, *segments))
-    if ".." in segments or os.path.commonpath([root, path]) != root or path == root:
+    if os.path.commonpath([root, path]) != root or path == root:
         raise ValueError("unsafe local path for %s" % url)
     return path
 
@@ -70,13 +75,32 @@ def parse_entries(data):
         return {entry.filename for entry in store}
 
 
+def show(name):
+    """Printable form of an untrusted name (escapes control characters)."""
+    return name if name.isprintable() else repr(name)
+
+
+def list_local(path):
+    """Print the names recorded in a local .DS_Store file."""
+    with open(path, "rb") as f:
+        data = f.read()
+    if not data.startswith(MAGIC):
+        log("[ERROR] %s is not a valid .DS_Store" % path)
+        return 1
+    names = sorted(parse_entries(data))
+    for name in names:
+        print(show(name))
+    log("[*] %d name(s) in %s" % (len(names), path))
+    return 0
+
+
 def log(msg):
     print(msg, file=sys.stderr, flush=True)
 
 
 class Scanner:
     def __init__(self, output=".", threads=10, timeout=10.0, insecure=False,
-                 user_agent=DEFAULT_UA, verbose=False):
+                 user_agent=DEFAULT_UA, verbose=False, allow_traversal=False):
         ctx = ssl.create_default_context()
         if insecure:
             ctx.check_hostname = False
@@ -87,6 +111,7 @@ class Scanner:
         self.threads = threads
         self.timeout = timeout
         self.verbose = verbose
+        self.allow_traversal = allow_traversal
 
     def fetch(self, url):
         try:
@@ -134,8 +159,8 @@ class Scanner:
         base = url[: -len(DS_STORE)]
         children = []
         for name in sorted(names):
-            if not is_safe_name(name):
-                log("[WARN] skipped unsafe entry %r in %s" % (name, url))
+            if not name or not (self.allow_traversal or is_safe_name(name)):
+                log("[WARN] skipped unsafe entry %r in %s (see --allow-traversal)" % (name, url))
                 continue
             child = base + urllib.parse.quote(name)
             children.append(child)
@@ -164,21 +189,32 @@ def main(argv=None):
         prog="dsleak",
         description="A .DS_Store file disclosure exploit. Parses .DS_Store files "
                     "and downloads the listed files recursively.",
-        epilog="example: dsleak https://www.example.com/.DS_Store",
+        epilog="examples: dsleak https://www.example.com/.DS_Store | dsleak ./.DS_Store (list names only)",
     )
-    parser.add_argument("url", help="target .DS_Store URL (or the directory URL that contains it)")
+    parser.add_argument("url", help="target .DS_Store URL (or the directory URL that contains it), "
+                                    "or a local .DS_Store file to list its names")
     parser.add_argument("-o", "--output", default=".", help="output directory (default: current directory)")
     parser.add_argument("-t", "--threads", type=int, default=10, help="concurrent requests (default: 10)")
     parser.add_argument("--timeout", type=float, default=10.0, help="request timeout in seconds (default: 10)")
     parser.add_argument("-k", "--insecure", action="store_true", help="skip TLS certificate verification")
     parser.add_argument("-A", "--user-agent", default=DEFAULT_UA, help="User-Agent header")
+    parser.add_argument("--allow-traversal", action="store_true",
+                        help="also request entries such as ../x or a/b (files are still saved inside the output directory)")
     parser.add_argument("-v", "--verbose", action="store_true", help="also report non-200 responses")
     parser.add_argument("-V", "--version", action="version", version="%(prog)s " + __version__)
     args = parser.parse_args(argv)
     if args.threads < 1:
         parser.error("--threads must be >= 1")
 
-    scanner = Scanner(args.output, args.threads, args.timeout, args.insecure, args.user_agent, args.verbose)
+    if os.path.isfile(args.url):
+        try:
+            return list_local(args.url)
+        except Exception as e:  # malformed file
+            log("[ERROR] cannot parse %s: %s" % (args.url, e))
+            return 1
+
+    scanner = Scanner(args.output, args.threads, args.timeout, args.insecure, args.user_agent,
+                      args.verbose, args.allow_traversal)
     try:
         saved = scanner.run(args.url)
     except KeyboardInterrupt:

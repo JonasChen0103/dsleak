@@ -1,5 +1,7 @@
 """End-to-end test: crawl a fake leaky site served from a temp directory."""
+import contextlib
 import functools
+import io
 import os
 import tempfile
 import threading
@@ -31,7 +33,7 @@ class CrawlTest(unittest.TestCase):
         write_ds_store(os.path.join(self.site, ".DS_Store"),
                        ["index.php", "admin", "../escape", "missing.txt"])
         write_ds_store(os.path.join(self.site, "admin", ".DS_Store"), ["config.json"])
-        for rel in ("index.php", "admin/config.json"):
+        for rel in ("index.php", "admin/config.json", "escape"):
             with open(os.path.join(self.site, rel), "w") as f:
                 f.write("secret " + rel)
 
@@ -55,6 +57,22 @@ class CrawlTest(unittest.TestCase):
             self.assertEqual(f.read(), "secret admin/config.json")
         self.assertFalse(os.path.exists(os.path.join(self.out, "escape")))
 
+    def test_allow_traversal(self):
+        # the test server normalizes /../escape to /escape, like many real ones
+        saved = exp.Scanner(output=self.out, allow_traversal=True).run(self.host)
+        self.assertEqual(saved, 5)
+        root = os.path.join(self.out, self.host.replace(":", "_"))
+        self.assertTrue(os.path.isfile(os.path.join(root, "__", "escape")))
+        self.assertFalse(os.path.exists(os.path.join(self.out, "escape")))
+
+    def test_list_local_file(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            self.assertEqual(exp.main([os.path.join(self.site, ".DS_Store")]), 0)
+        self.assertEqual(buf.getvalue().split(), sorted(["index.php", "admin", "../escape", "missing.txt"]))
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(exp.main([os.path.join(self.site, "index.php")]), 1)
+
     def test_rejects_soft_404(self):
         with open(os.path.join(self.site, ".DS_Store"), "w") as f:
             f.write("<html>not found</html>")
@@ -76,8 +94,10 @@ class HelperTest(unittest.TestCase):
         self.assertTrue(exp.is_safe_name("..hidden"))
 
     def test_local_path_stays_in_root(self):
+        self.assertTrue(exp.local_path("out", "http://a.com/x/%2e%2e/%2e%2e/etc").endswith(
+            os.path.join("a.com", "x", "__", "__", "etc")))
         with self.assertRaises(ValueError):
-            exp.local_path("out", "http://a.com/x/%2e%2e/%2e%2e/etc")
+            exp.local_path("out", "http:///")  # no host: would be root itself
         self.assertTrue(exp.local_path("out", "http://a.com:8080/a%2Fb").endswith(
             os.path.join("a.com_8080", "a_b")))
 
