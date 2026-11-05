@@ -39,9 +39,17 @@ macOS Finder writes a hidden `.DS_Store` file into every folder it opens. The fi
 
 ## Installation
 
+Install it as a `dsleak` command with [uv](https://docs.astral.sh/uv/) (recommended) or pipx. Both keep it in an isolated environment, so it also works on Pythons that block global `pip install` (PEP 668):
+
 ```bash
+uv tool install git+https://github.com/JonasChen0103/dsleak.git
+# or
+pipx install git+https://github.com/JonasChen0103/dsleak.git
+# or, inside a virtual environment
 pip install git+https://github.com/JonasChen0103/dsleak.git
 ```
+
+Upgrade with `uv tool upgrade dsleak`, remove with `uv tool uninstall dsleak`.
 
 Or run the script directly:
 
@@ -148,8 +156,16 @@ defaults write com.apple.desktopservices DSDontWriteNetworkStores -bool true  # 
 ## Development
 
 ```bash
-pip install ds-store
-python -m unittest -v
+git clone https://github.com/JonasChen0103/dsleak.git
+cd dsleak
+uv run python -m unittest -v    # creates .venv and installs dependencies automatically
+# without uv: python -m venv .venv, activate it, pip install ds-store, python -m unittest -v
+```
+
+To use your working copy as the `dsleak` command, install it in editable mode; code changes take effect without reinstalling:
+
+```bash
+uv tool install -e .
 ```
 
 The end-to-end test serves a fake leaky site from a temporary directory and checks the recursive download, the path traversal guard and the soft-404 check.
@@ -189,9 +205,17 @@ macOS 的 Finder 會在每個開啟過的資料夾裡寫入隱藏的 `.DS_Store`
 
 ### 安裝
 
+建議用 [uv](https://docs.astral.sh/uv/) 或 pipx 安裝成 `dsleak` 指令。兩者都會裝在獨立環境中，因此在禁止全域 `pip install` 的 Python（PEP 668）上也能使用：
+
 ```bash
+uv tool install git+https://github.com/JonasChen0103/dsleak.git
+# 或
+pipx install git+https://github.com/JonasChen0103/dsleak.git
+# 或在虛擬環境中
 pip install git+https://github.com/JonasChen0103/dsleak.git
 ```
+
+更新用 `uv tool upgrade dsleak`，移除用 `uv tool uninstall dsleak`。
 
 或直接執行腳本：
 
@@ -298,8 +322,16 @@ defaults write com.apple.desktopservices DSDontWriteNetworkStores -bool true  # 
 ### 開發
 
 ```bash
-pip install ds-store
-python -m unittest -v
+git clone https://github.com/JonasChen0103/dsleak.git
+cd dsleak
+uv run python -m unittest -v    # 自動建立 .venv 並安裝相依套件
+# 不使用 uv：python -m venv .venv，啟用後 pip install ds-store，再執行 python -m unittest -v
+```
+
+若想讓 `dsleak` 指令直接使用你的工作副本，請以 editable 模式安裝，修改程式碼後不需重新安裝即可生效：
+
+```bash
+uv tool install -e .
 ```
 
 端對端測試會從暫存目錄架設一個模擬外洩的網站，驗證遞迴下載、路徑穿越防護與軟 404 檢查。
