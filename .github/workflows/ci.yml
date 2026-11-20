@@ -10,14 +10,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, windows-latest]  # 26.04 (ubuntu-latest) has no Python 3.9 build
-        python: ["3.9", "3.13"]
+        os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: "3.x"
       - run: pip install .
       - run: python -m unittest -v
       - run: dsleak --version

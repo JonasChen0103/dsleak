@@ -1,7 +1,7 @@
 # dsleak
 
 [![CI](https://github.com/JonasChen0103/dsleak/actions/workflows/ci.yml/badge.svg)](https://github.com/JonasChen0103/dsleak/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)](pyproject.toml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 A **`.DS_Store` file disclosure exploit**. It downloads a leaked `.DS_Store`, parses the file names it records, and recursively downloads every listed file and sub-directory `.DS_Store`.
