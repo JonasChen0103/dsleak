@@ -19,6 +19,11 @@ def write_ds_store(path, names):
             d[name]["Iloc"] = (0, 0)
 
 
+def mark_dir(path, name):
+    with DSStore.open(path, "r+") as d:
+        d[name]["dscl"] = ("bool", True)  # folder-only record
+
+
 class QuietHandler(SimpleHTTPRequestHandler):
     def log_message(self, *args):
         pass
@@ -30,10 +35,13 @@ class CrawlTest(unittest.TestCase):
         self.site = os.path.join(self.tmp.name, "site")
         self.out = os.path.join(self.tmp.name, "out")
         os.makedirs(os.path.join(self.site, "admin"))
+        os.makedirs(os.path.join(self.site, "v1.2"))
         write_ds_store(os.path.join(self.site, ".DS_Store"),
-                       ["index.php", "admin", "../escape", "missing.txt"])
+                       ["index.php", "admin", "../escape", "missing.txt", "v1.2"])
+        mark_dir(os.path.join(self.site, ".DS_Store"), "v1.2")
+        write_ds_store(os.path.join(self.site, "v1.2", ".DS_Store"), ["api.js"])
         write_ds_store(os.path.join(self.site, "admin", ".DS_Store"), ["config.json"])
-        for rel in ("index.php", "admin/config.json", "escape"):
+        for rel in ("index.php", "admin/config.json", "escape", "v1.2/api.js"):
             with open(os.path.join(self.site, rel), "w") as f:
                 f.write("secret " + rel)
 
@@ -50,8 +58,9 @@ class CrawlTest(unittest.TestCase):
     def test_recursive_download(self):
         saved = exp.Scanner(output=self.out, threads=4).run(self.host)  # no scheme, no suffix
         root = os.path.join(self.out, self.host.replace(":", "_"))
-        self.assertEqual(saved, 4)
-        for rel in (".DS_Store", "index.php", "admin/.DS_Store", "admin/config.json"):
+        self.assertEqual(saved, 6)
+        for rel in (".DS_Store", "index.php", "admin/.DS_Store", "admin/config.json",
+                    "v1.2/.DS_Store", "v1.2/api.js"):  # dotted dir found via its folder record
             self.assertTrue(os.path.isfile(os.path.join(root, rel)), rel)
         with open(os.path.join(root, "admin", "config.json")) as f:
             self.assertEqual(f.read(), "secret admin/config.json")
@@ -60,7 +69,7 @@ class CrawlTest(unittest.TestCase):
     def test_allow_traversal(self):
         # the test server normalizes /../escape to /escape, like many real ones
         saved = exp.Scanner(output=self.out, allow_traversal=True).run(self.host)
-        self.assertEqual(saved, 5)
+        self.assertEqual(saved, 7)
         root = os.path.join(self.out, self.host.replace(":", "_"))
         self.assertTrue(os.path.isfile(os.path.join(root, "__", "escape")))
         self.assertFalse(os.path.exists(os.path.join(self.out, "escape")))
@@ -69,9 +78,21 @@ class CrawlTest(unittest.TestCase):
         buf = io.StringIO()
         with contextlib.redirect_stdout(buf):
             self.assertEqual(exp.main([os.path.join(self.site, ".DS_Store")]), 0)
-        self.assertEqual(buf.getvalue().split(), sorted(["index.php", "admin", "../escape", "missing.txt"]))
+        self.assertEqual(buf.getvalue().split(),
+                         sorted(["index.php", "admin", "../escape", "missing.txt", "v1.2/"]))
         with contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(exp.main([os.path.join(self.site, "index.php")]), 1)
+
+    def test_list_only(self):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            exp.Scanner(output=self.out, list_only=True).run(self.host)
+        out = buf.getvalue()
+        self.assertIn("[+] http://%s/admin/config.json" % self.host, out)
+        self.assertIn("[+] http://%s/v1.2/api.js" % self.host, out)
+        root = os.path.join(self.out, self.host.replace(":", "_"))
+        self.assertTrue(os.path.isfile(os.path.join(root, "v1.2", ".DS_Store")))
+        self.assertFalse(os.path.exists(os.path.join(root, "index.php")))
 
     def test_rejects_soft_404(self):
         with open(os.path.join(self.site, ".DS_Store"), "w") as f:

@@ -17,7 +17,7 @@ from io import BytesIO
 
 from ds_store import DSStore
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 DS_STORE = ".DS_Store"
 MAGIC = b"\x00\x00\x00\x01Bud1"
@@ -25,6 +25,10 @@ DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 # Path separators and characters that are illegal in Windows file names.
 UNSAFE_CHARS = re.compile(r'[\\/<>:"|?*\x00-\x1f]')
 FILE_EXT = re.compile(r"\.[A-Za-z0-9]{1,5}$")
+# Records Finder only writes for folders (view settings, folder sizes).
+DIR_CODES = {"bwsp", "dscl", "fwi0", "fwsw", "fwvh", "glvp", "GRP0", "icgo", "icsp", "icvo", "icvp",
+             "lg1S", "logS", "lssp", "lsvC", "lsvo", "lsvp", "lsvP", "lsvt", "modD", "moDD",
+             "ph1S", "phyS", "vSrn", "vstl"}
 
 
 class NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -70,9 +74,12 @@ def local_path(root, url):
 
 
 def parse_entries(data):
-    """Return the set of file names recorded in a .DS_Store blob."""
+    """Return {name: is_dir} for the names recorded in a .DS_Store blob."""
+    names = {}
     with DSStore.open(BytesIO(data), "r") as store:
-        return {entry.filename for entry in store}
+        for entry in store:
+            names[entry.filename] = names.get(entry.filename, False) or entry.code.decode("latin-1") in DIR_CODES
+    return names
 
 
 def show(name):
@@ -87,9 +94,9 @@ def list_local(path):
     if not data.startswith(MAGIC):
         log("[ERROR] %s is not a valid .DS_Store" % path)
         return 1
-    names = sorted(parse_entries(data))
-    for name in names:
-        print(show(name))
+    names = parse_entries(data)
+    for name in sorted(names):
+        print(show(name) + ("/" if names[name] else ""))
     log("[*] %d name(s) in %s" % (len(names), path))
     return 0
 
@@ -100,7 +107,7 @@ def log(msg):
 
 class Scanner:
     def __init__(self, output=".", threads=10, timeout=10.0, insecure=False,
-                 user_agent=DEFAULT_UA, verbose=False, allow_traversal=False):
+                 user_agent=DEFAULT_UA, verbose=False, allow_traversal=False, list_only=False):
         ctx = ssl.create_default_context()
         if insecure:
             ctx.check_hostname = False
@@ -112,6 +119,7 @@ class Scanner:
         self.timeout = timeout
         self.verbose = verbose
         self.allow_traversal = allow_traversal
+        self.list_only = list_only
 
     def fetch(self, url):
         try:
@@ -123,6 +131,10 @@ class Scanner:
 
     def process(self, url):
         """Download one URL. Returns (saved, child_urls)."""
+        is_ds_store = url.endswith("/" + DS_STORE)
+        if self.list_only and not is_ds_store:
+            print("[+] %s" % url, flush=True)
+            return True, []
         try:
             status, body = self.fetch(url)
         except (urllib.error.URLError, OSError, ValueError) as e:
@@ -133,7 +145,6 @@ class Scanner:
                 log("[%d] %s" % (status, url))
             return False, []
 
-        is_ds_store = url.endswith("/" + DS_STORE)
         if is_ds_store and not body.startswith(MAGIC):
             log("[WARN] %s is not a valid .DS_Store (soft 404?)" % url)
             return False, []
@@ -164,13 +175,14 @@ class Scanner:
                 continue
             child = base + urllib.parse.quote(name)
             children.append(child)
-            # ponytail: extension heuristic, a dir named "v1.2" is never probed
-            if not FILE_EXT.search(name):
+            # ponytail: a dir with a dotted name and no folder records (e.g. never opened
+            # in Finder) is still not probed; probe every name if that matters
+            if names[name] or not FILE_EXT.search(name):
                 children.append(child + "/" + DS_STORE)
         return True, children
 
     def run(self, start_url):
-        """Breadth-first crawl starting at start_url. Returns files saved."""
+        """Breadth-first crawl starting at start_url. Returns files saved (or listed)."""
         seen, saved = set(), 0
         level = [normalize_url(start_url)]
         with ThreadPoolExecutor(self.threads) as pool:
@@ -200,6 +212,8 @@ def main(argv=None):
     parser.add_argument("-A", "--user-agent", default=DEFAULT_UA, help="User-Agent header")
     parser.add_argument("--allow-traversal", action="store_true",
                         help="also request entries such as ../x or a/b (files are still saved inside the output directory)")
+    parser.add_argument("-l", "--list-only", action="store_true",
+                        help="only fetch .DS_Store files; print the other URLs instead of downloading them")
     parser.add_argument("-v", "--verbose", action="store_true", help="also report non-200 responses")
     parser.add_argument("-V", "--version", action="version", version="%(prog)s " + __version__)
     args = parser.parse_args(argv)
@@ -214,13 +228,14 @@ def main(argv=None):
             return 1
 
     scanner = Scanner(args.output, args.threads, args.timeout, args.insecure, args.user_agent,
-                      args.verbose, args.allow_traversal)
+                      args.verbose, args.allow_traversal, args.list_only)
     try:
         saved = scanner.run(args.url)
     except KeyboardInterrupt:
         log("[!] Interrupted")
         return 130
-    log("[*] Done. %d file(s) saved under %s" % (saved, os.path.abspath(args.output)))
+    log("[*] Done. %d %s under %s" % (saved, "URL(s) found, .DS_Store files saved" if args.list_only
+                                      else "file(s) saved", os.path.abspath(args.output)))
     return 0 if saved else 1
 
 
